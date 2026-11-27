@@ -27,15 +27,28 @@ class _Player:
 
 
 class Race:
-    def __init__(self, secret: str, player_ids: list[str]):
+    def __init__(self, secret: str, player_ids: list[str], time_limit: float = 300,
+                 bots: list[str] = ()):
         if not player_ids:
             raise RaceError("need at least one player")
         if len(set(player_ids)) != len(player_ids):
             raise RaceError("duplicate player id")
+        if time_limit <= 0:
+            raise RaceError("time limit must be positive")
+        if not set(bots) <= set(player_ids):
+            raise RaceError("unknown bot")
         self._secret = secret
+        self._deadline = time_limit
+        self._bots = set(bots)
         self._players = {pid: _Player() for pid in player_ids}
 
-    def done(self) -> bool:
+    @property
+    def deadline(self) -> float:
+        return self._deadline
+
+    def done(self, t: float | None = None) -> bool:
+        if t is not None and t > self._deadline:
+            return True
         return all(p.finished for p in self._players.values())
 
     def guess(self, player_id: str, word: str, t: float) -> GuessResult:
@@ -44,6 +57,8 @@ class Race:
             raise RaceError("unknown player")
         if player.finished:
             raise RaceError("player already finished")
+        if t > self._deadline:
+            raise RaceError("race over")
         word = rules.normalize(word)
         reason = rules.check_guess(word, player.history, hard=False)
         if reason is not None:
@@ -56,4 +71,8 @@ class Race:
         if finished:
             player.finished = True
             player.finish_time = t
+        # A human solve halves the time left; the bot is excluded because it
+        # solves in milliseconds and would halve every race.
+        if solved and player_id not in self._bots:
+            self._deadline = t + (self._deadline - t) / 2
         return GuessResult(True, pattern, number, solved, finished)
