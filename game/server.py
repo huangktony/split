@@ -1,4 +1,4 @@
-"""Websocket server for a multiplayer Wordle race (stage S1: bare race)."""
+"""Websocket server for a multiplayer Wordle race."""
 
 import argparse
 import asyncio
@@ -21,6 +21,8 @@ class RaceServer:
         self.time_limit = time_limit
         self.clock = clock
         self.done = asyncio.Event()
+        self.wake = asyncio.Event()    # set when the deadline may have changed
+        self.timer = None
         self.race = None
         self.start = None
         self.names = {}    # player_id -> name, in join order
@@ -34,8 +36,10 @@ class RaceServer:
         await self._send(ws, {"type": "error", "reason": reason})
         await ws.close()
 
-    async def _broadcast(self, msg):
+    async def _broadcast(self, msg, skip=None):
         for ws in self.conns.values():
+            if ws is skip:
+                continue
             try:
                 await self._send(ws, msg)
             except ConnectionClosed:
@@ -72,6 +76,7 @@ class RaceServer:
             self.race = Race(self.secret, list(self.names), time_limit=self.time_limit,
                              bots=self.bots)
             self.start = self.clock()
+            self.timer = asyncio.create_task(self._watch_deadline())
             await self._broadcast({"type": "start", "players": list(self.names.values()),
                                    "seconds_left": self.time_limit})
 
@@ -93,6 +98,7 @@ class RaceServer:
         if self.done.is_set():
             return
         t = self.clock() - self.start
+        old_deadline = self.race.deadline
         try:
             result = self.race.guess(pid, word, t)
         except RaceError as e:
@@ -102,14 +108,34 @@ class RaceServer:
                 await self._send(ws, {"type": "feedback", "guess": rules.normalize(word),
                                       "pattern": result.pattern,
                                       "guess_number": result.guess_number})
+                await self._broadcast({"type": "progress", "name": self.names[pid],
+                                       "guesses": result.guess_number,
+                                       "solved": result.solved}, skip=ws)
+                if self.race.deadline != old_deadline:
+                    await self._broadcast({"type": "deadline",
+                                           "seconds_left": self.race.deadline - t})
+                    self.wake.set()
             else:
                 await self._send(ws, {"type": "invalid", "word": word,
                                       "reason": result.reason})
         if self.race.done(t):
             await self._finish()
 
+    async def _watch_deadline(self):
+        while not self.done.is_set():
+            now = self.clock() - self.start
+            try:
+                await asyncio.wait_for(self.wake.wait(),
+                                       max(0, self.race.deadline - now) + 0.01)
+            except asyncio.TimeoutError:
+                pass
+            self.wake.clear()
+            if not self.done.is_set() and self.race.done(self.clock() - self.start):
+                await self._finish()
+
     async def _finish(self):
         self.done.set()  # set first so results go out exactly once
+        self.wake.set()  # lets the timer task exit
         ranking = [{"name": self.names[s.player_id], "guesses": s.guesses,
                     "solved": s.solved, "place": s.place, "dropped": s.dropped}
                    for s in self.race.ranking()]
@@ -124,6 +150,8 @@ async def _serve(args):
                         args.time_limit)
     async with serve(server.handler, args.host, args.port):
         await server.done.wait()
+        if server.timer is not None:
+            await server.timer
 
 
 def main():
