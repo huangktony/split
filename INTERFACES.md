@@ -71,7 +71,8 @@ class Race:
     def ranking(self) -> list[Standing]: ...
     def done(self) -> bool: ...
 
-GuessResult: legal: bool, pattern: int | None, guess_number: int, solved: bool, finished: bool
+GuessResult: legal: bool, pattern: int | None, guess_number: int, solved: bool, finished: bool, reason: str | None
+RaceError:   raised for an unknown player or a player who already finished. A rejected word is not an error: it returns legal=False with a reason and does not count.
 Standing:    player_id, solved: bool, guesses: int, finish_time: float | None, place: int
 ```
 
