@@ -93,7 +93,7 @@ Standing:    player_id, solved: bool, guesses: int, finish_time: float | None, p
 Client to server:
 
 ```json
-{"type": "join",  "name": "tony"}
+{"type": "join",  "name": "tony", "bot": false}
 {"type": "guess", "word": "salet"}
 ```
 
@@ -101,12 +101,15 @@ Server to client:
 
 ```json
 {"type": "joined",   "player_id": "p2", "max_guesses": 6, "hard": false}
-{"type": "start",    "players": ["tony", "mahitha", "bot"]}
+{"type": "start",    "players": ["tony", "mahitha", "bot"], "seconds_left": 300}
 {"type": "feedback", "guess": "salet", "pattern": 34, "guess_number": 1}
 {"type": "invalid",  "word": "xxxxx", "reason": "not in word list"}
-{"type": "deadline", "deadline": 200.0}
+{"type": "deadline", "seconds_left": 100.0}
 {"type": "progress", "name": "bot", "guesses": 3, "solved": false}
-{"type": "results",  "secret": "crane", "ranking": [{"name": "bot", "guesses": 3, "solved": true, "place": 1}]}
+{"type": "results",  "secret": "crane", "ranking": [{"name": "bot", "guesses": 3, "solved": true, "place": 1, "dropped": false}]}
+{"type": "error",    "reason": "race full"}
 ```
+
+Times sent to clients are `seconds_left`, never server clock values, since every laptop's clock differs. `bot: true` on join marks a bot (trust-based) so its solves do not halve the time. `error` with "expected join", "race full" or "name taken" is followed by the server closing the connection; "unknown message type" is not.
 
 Leak rule: the secret appears only in `results`, sent after `Race.done()`. `progress` shows opponents' guess counts, never their letters or patterns (patterns would leak information about the shared word).
