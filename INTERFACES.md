@@ -115,4 +115,6 @@ Times sent to clients are `seconds_left`, never server clock values, since every
 
 Disconnects: in the lobby the player is removed (slot and name free again; player ids are never reused). Mid-race the player is dropped and everyone else gets `left`; a player who already finished keeps their result.
 
+Server command: `python -m game.server --players N --seed S [--hard] [--rule fewest_guesses|first_to_solve] [--time-limit 300]`. `RaceServer(secret, n_players, hard=False, rule="fewest_guesses", time_limit=300)`; pass everything after n_players by keyword.
+
 Leak rule: the secret appears only in `results`, sent after `Race.done()`. `progress` shows opponents' guess counts, never their letters or patterns (patterns would leak information about the shared word).
