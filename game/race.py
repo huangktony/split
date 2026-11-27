@@ -28,8 +28,15 @@ class _Player:
 
 class Race:
     def __init__(self, secret: str, player_ids: list[str]):
+        if not player_ids:
+            raise RaceError("need at least one player")
+        if len(set(player_ids)) != len(player_ids):
+            raise RaceError("duplicate player id")
         self._secret = secret
         self._players = {pid: _Player() for pid in player_ids}
+
+    def done(self) -> bool:
+        return all(p.finished for p in self._players.values())
 
     def guess(self, player_id: str, word: str, t: float) -> GuessResult:
         player = self._players.get(player_id)
