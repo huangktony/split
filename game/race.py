@@ -19,11 +19,21 @@ class GuessResult:
     reason: str | None = None  # why the word was rejected; None when legal
 
 
+@dataclass(frozen=True)
+class Standing:
+    player_id: str
+    solved: bool
+    guesses: int               # counted (legal) guesses used
+    finish_time: float | None  # None if the player has not finished
+    place: int                 # 1 = best
+
+
 @dataclass
 class _Player:
     history: list[tuple[str, int]] = field(default_factory=list)
     finished: bool = False
     finish_time: float | None = None
+    solved: bool = False
 
 
 class Race:
@@ -68,6 +78,7 @@ class Race:
         number = len(player.history)
         solved = pattern == rules.WIN
         finished = solved or number == rules.MAX_GUESSES
+        player.solved = solved
         if finished:
             player.finished = True
             player.finish_time = t
@@ -76,3 +87,20 @@ class Race:
         if solved and player_id not in self._bots:
             self._deadline = t + (self._deadline - t) / 2
         return GuessResult(True, pattern, number, solved, finished)
+
+    def ranking(self) -> list[Standing]:
+        items = [(pid, p) for pid, p in self._players.items()]
+        solvers = sorted((i for i in items if i[1].solved),
+                         key=lambda i: len(i[1].history))  # stable: keeps join order
+        out = []
+        place = 0
+        for n, (pid, p) in enumerate(solvers):
+            if n == 0 or len(p.history) != len(solvers[n - 1][1].history):
+                place = n + 1  # competition ranking: 1, 1, 3
+            out.append(Standing(pid, True, len(p.history), p.finish_time, place))
+        unsolved_place = len(solvers) + 1
+        for pid, p in items:
+            if not p.solved:
+                out.append(Standing(pid, False, len(p.history), p.finish_time,
+                                    unsolved_place))
+        return out
