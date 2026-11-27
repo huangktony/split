@@ -65,7 +65,8 @@ Pure core, no networking, so tests can drive it with fake players and fake clock
 
 ```python
 class Race:
-    def __init__(self, secret: str, player_ids: list[str], rule: str = "fewest_guesses", hard: bool = False): ...
+    def __init__(self, secret: str, player_ids: list[str], rule: str = "fewest_guesses", hard: bool = False, time_limit: float = 300): ...
+    def drop(self, player_id: str) -> None: ...
     def guess(self, player_id: str, word: str, t: float) -> GuessResult: ...
     def ranking(self) -> list[Standing]: ...
     def done(self) -> bool: ...
@@ -75,9 +76,10 @@ Standing:    player_id, solved: bool, guesses: int, finish_time: float | None, p
 ```
 
 - `t` is the server's arrival time, never a client clock.
-- `rule="fewest_guesses"`: solved first, then fewer guesses, then earlier `finish_time`.
-- `rule="first_to_solve"`: solved first, then earlier `finish_time`.
-- Unsolved players (6 misses or dropped connection) rank last, tied with each other.
+- `rule="fewest_guesses"`: solved first, then fewer guesses. Equal guesses share a place (1, 1, 3); time is not a tiebreak, because the bot answers in milliseconds and would win every tie.
+- `rule="first_to_solve"`: solved first, then earlier `finish_time`. Kept runnable for the winner-rule comparison.
+- `time_limit` (seconds, default 300, clock starts at t=0): guesses after it are refused with "race over", and the race is done once every player is finished or time is up.
+- Unsolved players (6 misses, dropped connection, or out of time) rank last, tied with each other.
 - Illegal guesses do not count as a guess.
 
 ### Websocket messages (JSON, one object per message)
