@@ -26,6 +26,7 @@ class Standing:
     guesses: int               # counted (legal) guesses used
     finish_time: float | None  # None if the player has not finished
     place: int                 # 1 = best
+    dropped: bool = False
 
 
 @dataclass
@@ -34,6 +35,7 @@ class _Player:
     finished: bool = False
     finish_time: float | None = None
     solved: bool = False
+    dropped: bool = False
 
 
 class Race:
@@ -65,6 +67,8 @@ class Race:
         player = self._players.get(player_id)
         if player is None:
             raise RaceError("unknown player")
+        if player.dropped:
+            raise RaceError("player dropped")
         if player.finished:
             raise RaceError("player already finished")
         if t > self._deadline:
@@ -88,6 +92,15 @@ class Race:
             self._deadline = t + (self._deadline - t) / 2
         return GuessResult(True, pattern, number, solved, finished)
 
+    def drop(self, player_id: str) -> None:
+        player = self._players.get(player_id)
+        if player is None:
+            raise RaceError("unknown player")
+        if player.finished:  # includes already dropped
+            return
+        player.dropped = True
+        player.finished = True
+
     def ranking(self) -> list[Standing]:
         items = [(pid, p) for pid, p in self._players.items()]
         solvers = sorted((i for i in items if i[1].solved),
@@ -102,5 +115,5 @@ class Race:
         for pid, p in items:
             if not p.solved:
                 out.append(Standing(pid, False, len(p.history), p.finish_time,
-                                    unsolved_place))
+                                    unsolved_place, p.dropped))
         return out
