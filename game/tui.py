@@ -1,16 +1,19 @@
 """Terminal frontend for the Wordle race (stdlib curses only).
 
-Run:  python3 -m game.tui [--seed N] [--hard]
-Three screens: create -> race -> results (then back to create).
+Run solo:    python3 -m game.tui [--seed N] [--hard]
+Run online:  python3 -m game.tui --server ws://HOST:8765 --name NAME
+Solo screens: create -> race -> results (then back to create).
+Online screens: lobby -> netrace -> netresults (one race per server run).
 """
 
 import argparse
 import curses
 import locale
 import os
+import sys
 import textwrap
 
-from game import rules, session
+from game import net, rules, session
 
 DEFAULT_SEED = 1124
 
@@ -239,14 +242,15 @@ def draw_keyboard(win, C, y, x, letter_states):
 # --- screens ----------------------------------------------------------------
 
 class App:
-    def __init__(self, win, seed, hard):
+    def __init__(self, win, seed, hard, online=None):
         self.win = win
+        self.conn, self.nr = online if online else (None, None)
         self.C = Colors()
         self.seed = seed
         self.fixed = True
         self.hard = hard
         self.race_no = 1
-        self.screen = "create"
+        self.screen = "lobby" if online else "create"
         self.sel = 0
         self.s = None
         self.used_seed = seed
@@ -410,10 +414,147 @@ class App:
             return False
         return True
 
+    # -- online: lobby --
+    def draw_lobby(self):
+        C, win, nr = self.C, self.win, self.nr
+        top_bar(win, C, "split · online", f"connected as {nr.name}")
+        put(win, 3, 4, "Waiting for players...", C.attr("text", "bg", bold=True))
+        put(win, 5, 4, "The race starts when everyone has joined.", C.attr("muted"))
+        if nr.hard:
+            put(win, 6, 4, "Hard mode is on.", C.attr("muted"))
+        footer(win, C, "", "[q] quit")
+
+    def key_lobby(self, k):
+        return k not in (ord("q"), ord("Q"))
+
+    # -- online: race --
+    def draw_netrace(self):
+        C, win, nr = self.C, self.win, self.nr
+        h, w = win.getmaxyx()
+        top_bar(win, C, f"split · online · {nr.name}" + (" · hard" if nr.hard else ""),
+                f"{fmt_time(nr.seconds_left())} left")
+        big = h >= 27 and w >= 80
+        put(win, 3, 2, f"YOUR BOARD · guess {min(len(nr.history) + 1, 6)} of 6",
+            C.attr("muted", "bg", bold=True))
+        bw, bh = draw_board(win, C, 5, 2, board_rows(nr, self.buf), big)
+        py = 5 + bh + 1
+        if nr.finished:
+            put(win, py, 2, "Waiting for the others to finish...", C.attr("muted"))
+        else:
+            put(win, py, 2, "> ", C.attr("muted"))
+            put(win, py, 4, self.buf.upper(), C.attr("text", "bg", bold=True))
+            if not nr.pending:
+                put(win, py, 4 + len(self.buf), "█", C.attr("text"))
+        if nr.error:
+            put(win, py + 1, 2, "! " + nr.error, C.attr("err"))
+
+        px = 2 + bw + 4
+        pw = min(42, w - px - 1)
+        rows = [("you", len(nr.history), nr.solved, False, nr.finished)]
+        rows += [(name, o["guesses"], o["solved"], o["left"], False)
+                 for name, o in nr.opponents.items()]
+        bh2 = len(rows) + 5
+        box(win, 4, px, pw, bh2, "RACE", C)
+        for i, (name, used, solved, left, out) in enumerate(rows):
+            if solved:
+                status, sa = f"✓ solved in {used}", C.attr("ok")
+            elif left:
+                status, sa = "left", C.attr("err")
+            elif out or used == rules.MAX_GUESSES:
+                status, sa = "✗ out of guesses", C.attr("err")
+            else:
+                status, sa = "playing", C.attr("muted")
+            put(win, 6 + i, px + 2, f"{name[:8]:<8}", C.attr("text", "bg", bold=name == "you"))
+            put(win, 6 + i, px + 11, pips(used), C.attr("text"))
+            put(win, 6 + i, px + 19, status, sa)
+        put(win, 6 + len(rows) + 1, px + 2, "Guess counts only, never letters."[: pw - 4],
+            C.attr("muted"))
+        ky = 4 + bh2 + 1
+        box(win, ky, px, pw, 6, "LETTERS", C)
+        draw_keyboard(win, C, ky + 2, px + 2, nr.letter_states())
+        pal = " | ".join(f"[{n}]" if n == C.name else n for n in PALETTE_NAMES)
+        footer(win, C, f"[enter] guess   [esc] clear   [tab] colors: {pal}")
+
+    def key_netrace(self, k):
+        nr = self.nr
+        if nr.finished or nr.pending:
+            if k == 9:
+                self.C.toggle()
+            return True
+        if k in (curses.KEY_BACKSPACE, 127, 8):
+            self.buf = self.buf[:-1]
+            nr.error = ""
+        elif k == 27:
+            self.buf = ""
+            nr.error = ""
+        elif k in (10, 13, curses.KEY_ENTER):
+            if len(self.buf) < 5:
+                nr.error = "need 5 letters"
+            else:
+                self.conn.guess(self.buf)
+                nr.pending = True
+        elif k == 9:
+            self.C.toggle()
+        elif 0 <= k < 256 and chr(k).isalpha() and chr(k).isascii():
+            if len(self.buf) < 5:
+                self.buf += chr(k).lower()
+                nr.error = ""
+        return True
+
+    # -- online: results --
+    def draw_netresults(self):
+        C, win, nr = self.C, self.win, self.nr
+        top_bar(win, C, f"split · online · {nr.name}", "finished")
+        put(win, 3, 4, "The word was", C.attr("muted"))
+        for i, ch in enumerate(nr.secret.upper()):
+            draw_tile(win, C, 5, 4 + i * 6, ch, rules.GREEN, True)
+        y = 10
+        put(win, y, 4, f"{'RANK':<6}{'PLAYER':<12}{'GUESSES':<10}NOTE",
+            C.attr("muted", "bg", bold=True))
+        put(win, y + 1, 4, "─" * 50, C.attr("border"))
+        for i, r in enumerate(nr.results):
+            rank = str(r["place"]) if r["solved"] else "✗"
+            note = "left" if r["dropped"] else ("" if r["solved"] else "didn't solve")
+            who = r["name"] + (" (you)" if r["name"] == nr.name else "")
+            row = f"{rank:<6}{who:<12}{r['guesses']:<10}"
+            put(win, y + 2 + i, 4, row, C.attr("text", "bg", bold=r["name"] == nr.name))
+            put(win, y + 2 + i, 4 + len(row), note, C.attr("err"))
+        put(win, y + 3 + len(nr.results), 4,
+            "Ranked by the server. Same place means a tie.", C.attr("muted"))
+        footer(win, C, "", "[q] quit")
+
+    def key_netresults(self, k):
+        return k not in (ord("q"), ord("Q"))
+
+    # -- online: error --
+    def draw_neterror(self):
+        C, win = self.C, self.win
+        top_bar(win, C, "split · online", "disconnected")
+        put(win, 3, 4, self.nr.error, C.attr("err", "bg", bold=True))
+        footer(win, C, "", "[q] quit")
+
+    def key_neterror(self, k):
+        return k not in (ord("q"), ord("Q"))
+
+    def poll_server(self):
+        for msg in self.conn.messages():
+            self.nr.apply(msg)
+            if msg["type"] == "feedback":
+                self.buf = ""
+        phase = self.nr.phase
+        if phase == "race" and self.screen == "lobby":
+            self.screen = "netrace"
+        elif phase == "results":
+            self.screen = "netresults"
+        elif phase == "error":
+            self.screen = "neterror"
+
     # -- loop --
     def run(self):
         self.win.timeout(200)
         while True:
+            if self.conn:
+                self.poll_server()
             self.win.erase()
             if not self.too_small():
                 getattr(self, f"draw_{self.screen}")()
@@ -427,18 +568,32 @@ class App:
                 return
 
 
-def main(stdscr, seed, hard):
-    App(stdscr, seed, hard).run()
+def main(stdscr, seed, hard, online=None):
+    App(stdscr, seed, hard, online).run()
 
 
 def cli():
     ap = argparse.ArgumentParser(prog="python3 -m game.tui")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--hard", action="store_true")
+    ap.add_argument("--server", help="race server URL, e.g. ws://localhost:8765")
+    ap.add_argument("--name", default=os.environ.get("USER", "player"))
     args = ap.parse_args()
+    online = None
+    if args.server:
+        try:
+            conn = net.Connection(args.server, args.name)
+        except Exception as e:
+            print(f"could not connect to {args.server}: {e}", file=sys.stderr)
+            sys.exit(1)
+        online = (conn, net.NetRace(args.name))
     locale.setlocale(locale.LC_ALL, "")
     os.environ.setdefault("ESCDELAY", "25")
-    curses.wrapper(main, args.seed, args.hard)
+    try:
+        curses.wrapper(main, args.seed, args.hard, online)
+    finally:
+        if online:
+            online[0].close()
 
 
 if __name__ == "__main__":
