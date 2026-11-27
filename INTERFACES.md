@@ -105,11 +105,14 @@ Server to client:
 {"type": "feedback", "guess": "salet", "pattern": 34, "guess_number": 1}
 {"type": "invalid",  "word": "xxxxx", "reason": "not in word list"}
 {"type": "deadline", "seconds_left": 100.0}
+{"type": "left",     "name": "mahitha"}
 {"type": "progress", "name": "bot", "guesses": 3, "solved": false}
 {"type": "results",  "secret": "crane", "ranking": [{"name": "bot", "guesses": 3, "solved": true, "place": 1, "dropped": false}]}
 {"type": "error",    "reason": "race full"}
 ```
 
 Times sent to clients are `seconds_left`, never server clock values, since every laptop's clock differs. `bot: true` on join marks a bot (trust-based) so its solves do not halve the time. `error` with "expected join", "race full" or "name taken" is followed by the server closing the connection; "unknown message type" is not.
+
+Disconnects: in the lobby the player is removed (slot and name free again; player ids are never reused). Mid-race the player is dropped and everyone else gets `left`; a player who already finished keeps their result.
 
 Leak rule: the secret appears only in `results`, sent after `Race.done()`. `progress` shows opponents' guess counts, never their letters or patterns (patterns would leak information about the shared word).
