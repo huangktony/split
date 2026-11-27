@@ -1,4 +1,4 @@
-"""Multiplayer Wordle race core, stage 1: per-player guesses against one secret."""
+"""Multiplayer Wordle race core: per-player guesses with legality checks."""
 
 from dataclasses import dataclass, field
 
@@ -11,10 +11,12 @@ class RaceError(Exception):
 
 @dataclass(frozen=True)
 class GuessResult:
-    pattern: int
-    guess_number: int
+    legal: bool
+    pattern: int | None      # None when not legal
+    guess_number: int        # counted guesses so far for this player (unchanged by a rejected word)
     solved: bool
     finished: bool
+    reason: str | None = None  # why the word was rejected; None when legal
 
 
 @dataclass
@@ -30,9 +32,15 @@ class Race:
         self._players = {pid: _Player() for pid in player_ids}
 
     def guess(self, player_id: str, word: str, t: float) -> GuessResult:
-        player = self._players[player_id]
+        player = self._players.get(player_id)
+        if player is None:
+            raise RaceError("unknown player")
         if player.finished:
             raise RaceError("player already finished")
+        word = rules.normalize(word)
+        reason = rules.check_guess(word, player.history, hard=False)
+        if reason is not None:
+            return GuessResult(False, None, len(player.history), False, False, reason)
         pattern = rules.feedback(word, self._secret)
         player.history.append((word, pattern))
         number = len(player.history)
@@ -41,4 +49,4 @@ class Race:
         if finished:
             player.finished = True
             player.finish_time = t
-        return GuessResult(pattern, number, solved, finished)
+        return GuessResult(True, pattern, number, solved, finished)
