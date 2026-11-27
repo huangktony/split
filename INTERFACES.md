@@ -100,7 +100,7 @@ Client to server:
 Server to client:
 
 ```json
-{"type": "joined",   "player_id": "p2", "max_guesses": 6, "hard": false}
+{"type": "joined",   "player_id": "p2", "max_guesses": 6, "hard": false, "feedback": "server"}
 {"type": "start",    "players": ["tony", "mahitha", "bot"], "seconds_left": 300}
 {"type": "feedback", "guess": "salet", "pattern": 34, "guess_number": 1}
 {"type": "invalid",  "word": "xxxxx", "reason": "not in word list"}
@@ -115,6 +115,8 @@ Times sent to clients are `seconds_left`, never server clock values, since every
 
 Disconnects: in the lobby the player is removed (slot and name free again; player ids are never reused). Mid-race the player is dropped and everyone else gets `left`; a player who already finished keeps their result.
 
-Server command: `python -m game.server --players N --seed S [--hard] [--rule fewest_guesses|first_to_solve] [--time-limit 300]`. `RaceServer(secret, n_players, hard=False, rule="fewest_guesses", time_limit=300)`; pass everything after n_players by keyword.
+Server command: `python -m game.server --players N --seed S [--hard] [--rule fewest_guesses|first_to_solve] [--time-limit 300] [--feedback server|client]`. `RaceServer(secret, n_players, hard=False, rule="fewest_guesses", time_limit=300, feedback="server")`; pass everything after n_players by keyword.
+
+Feedback location (`feedback=`): "server" (default) sends `pattern` in each `feedback` reply. "client" adds `"secret"` to `start`, adds `"feedback": "client"` to `joined`, and drops `pattern` from `feedback` replies so each client computes it with `rules.feedback`; the server still validates and ranks. Client mode breaks the leak rule by design and exists only for the comparison.
 
 Leak rule: the secret appears only in `results`, sent after `Race.done()`. `progress` shows opponents' guess counts, never their letters or patterns (patterns would leak information about the shared word).
