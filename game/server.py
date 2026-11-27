@@ -28,6 +28,7 @@ class RaceServer:
         self.names = {}    # player_id -> name, in join order
         self.bots = []
         self.conns = {}    # player_id -> websocket
+        self.next_id = 1   # never reused, even after a lobby leave
 
     async def _send(self, ws, msg):
         await ws.send(json.dumps(msg))
@@ -37,7 +38,7 @@ class RaceServer:
         await ws.close()
 
     async def _broadcast(self, msg, skip=None):
-        for ws in self.conns.values():
+        for ws in list(self.conns.values()):  # copy: a disconnect can edit conns mid-loop
             if ws is skip:
                 continue
             try:
@@ -64,32 +65,51 @@ class RaceServer:
         if msg["name"] in self.names.values():
             return await self._fail(ws, "name taken")
 
-        pid = f"p{len(self.names) + 1}"
+        pid = f"p{self.next_id}"
+        self.next_id += 1
         self.names[pid] = msg["name"]
         self.conns[pid] = ws
         if msg.get("bot", False):
             self.bots.append(pid)
-        await self._send(ws, {"type": "joined", "player_id": pid,
-                              "max_guesses": rules.MAX_GUESSES, "hard": self.hard})
+        try:
+            await self._send(ws, {"type": "joined", "player_id": pid,
+                                  "max_guesses": rules.MAX_GUESSES, "hard": self.hard})
 
-        if len(self.names) == self.n_players:
-            self.race = Race(self.secret, list(self.names), time_limit=self.time_limit,
-                             bots=self.bots)
-            self.start = self.clock()
-            self.timer = asyncio.create_task(self._watch_deadline())
-            await self._broadcast({"type": "start", "players": list(self.names.values()),
-                                   "seconds_left": self.time_limit})
+            if len(self.names) == self.n_players:
+                self.race = Race(self.secret, list(self.names), time_limit=self.time_limit,
+                                 bots=self.bots)
+                self.start = self.clock()
+                self.timer = asyncio.create_task(self._watch_deadline())
+                await self._broadcast({"type": "start", "players": list(self.names.values()),
+                                       "seconds_left": self.time_limit})
 
-        async for raw in ws:
-            try:
-                msg = json.loads(raw)
-            except ValueError:
-                msg = None
-            if isinstance(msg, dict) and msg.get("type") == "guess" \
-                    and isinstance(msg.get("word"), str):
-                await self._guess(ws, pid, msg["word"])
-            else:
-                await self._send(ws, {"type": "error", "reason": "unknown message type"})
+            async for raw in ws:
+                try:
+                    msg = json.loads(raw)
+                except ValueError:
+                    msg = None
+                if isinstance(msg, dict) and msg.get("type") == "guess" \
+                        and isinstance(msg.get("word"), str):
+                    await self._guess(ws, pid, msg["word"])
+                else:
+                    await self._send(ws, {"type": "error", "reason": "unknown message type"})
+        finally:
+            await self._leave(pid)
+
+    async def _leave(self, pid):
+        if self.done.is_set():
+            return
+        if self.race is None:
+            del self.names[pid]
+            del self.conns[pid]
+            if pid in self.bots:
+                self.bots.remove(pid)
+            return
+        self.race.drop(pid)
+        del self.conns[pid]
+        await self._broadcast({"type": "left", "name": self.names[pid]})
+        if self.race.done(self.clock() - self.start):
+            await self._finish()
 
     async def _guess(self, ws, pid, word):
         if self.race is None:
@@ -141,7 +161,7 @@ class RaceServer:
                    for s in self.race.ranking()]
         await self._broadcast({"type": "results", "secret": self.secret,
                                "ranking": ranking})
-        for ws in self.conns.values():
+        for ws in list(self.conns.values()):  # copy: a disconnect can edit conns mid-loop
             await ws.close()
 
 
