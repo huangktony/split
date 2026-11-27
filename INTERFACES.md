@@ -65,21 +65,25 @@ Pure core, no networking, so tests can drive it with fake players and fake clock
 
 ```python
 class Race:
-    def __init__(self, secret: str, player_ids: list[str], rule: str = "fewest_guesses", hard: bool = False, time_limit: float = 300): ...
+    def __init__(self, secret: str, player_ids: list[str], rule: str = "fewest_guesses", hard: bool = False, time_limit: float = 300,
+                 bots: list[str] = ()): ...
+    deadline: float  # read-only, current race end time
     def drop(self, player_id: str) -> None: ...
     def guess(self, player_id: str, word: str, t: float) -> GuessResult: ...
     def ranking(self) -> list[Standing]: ...
-    def done(self) -> bool: ...
+    def done(self, t: float | None = None) -> bool: ...
 
 GuessResult: legal: bool, pattern: int | None, guess_number: int, solved: bool, finished: bool, reason: str | None
-RaceError:   raised for an unknown player or a player who already finished. A rejected word is not an error: it returns legal=False with a reason and does not count.
+RaceError:   raised for an unknown player, a player who already finished, or a guess after the deadline ("race over"). A rejected word is not an error: it returns legal=False with a reason and does not count.
 Standing:    player_id, solved: bool, guesses: int, finish_time: float | None, place: int
 ```
 
 - `t` is the server's arrival time, never a client clock.
 - `rule="fewest_guesses"`: solved first, then fewer guesses. Equal guesses share a place (1, 1, 3); time is not a tiebreak, because the bot answers in milliseconds and would win every tie.
 - `rule="first_to_solve"`: solved first, then earlier `finish_time`. Kept runnable for the winner-rule comparison.
-- `time_limit` (seconds, default 300, clock starts at t=0): guesses after it are refused with "race over", and the race is done once every player is finished or time is up.
+- `time_limit` (seconds, default 300, clock starts at t=0) sets the starting `deadline`. Guesses with t > deadline raise "race over"; t == deadline is accepted.
+- Each human solve at time t halves the time left: `deadline = t + (deadline - t) / 2`. Players in `bots` do not trigger it, because the bot solves in milliseconds and would halve every race. Six misses do not trigger it either.
+- `done(t)` is True once every player is finished, or t > deadline. `done()` without t only checks finishes, so the server must pass the current time.
 - Unsolved players (6 misses, dropped connection, or out of time) rank last, tied with each other.
 - Illegal guesses do not count as a guess.
 
@@ -99,6 +103,7 @@ Server to client:
 {"type": "start",    "players": ["tony", "mahitha", "bot"]}
 {"type": "feedback", "guess": "salet", "pattern": 34, "guess_number": 1}
 {"type": "invalid",  "word": "xxxxx", "reason": "not in word list"}
+{"type": "deadline", "deadline": 200.0}
 {"type": "progress", "name": "bot", "guesses": 3, "solved": false}
 {"type": "results",  "secret": "crane", "ranking": [{"name": "bot", "guesses": 3, "solved": true, "place": 1}]}
 ```
