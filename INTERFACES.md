@@ -75,7 +75,7 @@ class Race:
 
 GuessResult: legal: bool, pattern: int | None, guess_number: int, solved: bool, finished: bool, reason: str | None
 RaceError:   raised for an unknown player, a player who already finished, or a guess after the deadline ("race over"). A rejected word is not an error: it returns legal=False with a reason and does not count.
-Standing:    player_id, solved: bool, guesses: int, finish_time: float | None, place: int
+Standing:    player_id, solved: bool, guesses: int, finish_time: float | None, place: int, dropped: bool
 ```
 
 - `t` is the server's arrival time, never a client clock.
@@ -85,6 +85,7 @@ Standing:    player_id, solved: bool, guesses: int, finish_time: float | None, p
 - Each human solve at time t halves the time left: `deadline = t + (deadline - t) / 2`. Players in `bots` do not trigger it, because the bot solves in milliseconds and would halve every race. Six misses do not trigger it either.
 - `done(t)` is True once every player is finished, or t > deadline. `done()` without t only checks finishes, so the server must pass the current time.
 - Unsolved players (6 misses, dropped connection, or out of time) rank last, tied with each other.
+- `drop(player_id)` (called on disconnect): an unfinished player forfeits, counts as finished for `done()`, and later guesses raise "player dropped". A player who already finished keeps their result. Dropping never changes the deadline.
 - Illegal guesses do not count as a guess.
 
 ### Websocket messages (JSON, one object per message)
