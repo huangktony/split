@@ -14,7 +14,13 @@ from game.race import Race, RaceError
 
 class RaceServer:
     def __init__(self, secret: str, n_players: int, hard: bool = False,
-                 rule: str = "fewest_guesses", time_limit: float = 300, clock=time.monotonic):
+                 rule: str = "fewest_guesses", time_limit: float = 300, clock=time.monotonic,
+                 feedback: str = "server"):
+        if feedback not in ("server", "client"):
+            raise ValueError("feedback must be 'server' or 'client'")
+        # "client": every client gets the secret at start and colors its own guesses.
+        # Kept only to compare against "server" with the leak scan.
+        self.feedback = feedback
         self.secret = secret
         self.n_players = n_players
         self.hard = hard
@@ -74,7 +80,8 @@ class RaceServer:
             self.bots.append(pid)
         try:
             await self._send(ws, {"type": "joined", "player_id": pid,
-                                  "max_guesses": rules.MAX_GUESSES, "hard": self.hard})
+                                  "max_guesses": rules.MAX_GUESSES, "hard": self.hard,
+                                  "feedback": self.feedback})
 
             if len(self.names) == self.n_players:
                 self.race = Race(self.secret, list(self.names), time_limit=self.time_limit,
@@ -82,8 +89,11 @@ class RaceServer:
                                  bots=self.bots)
                 self.start = self.clock()
                 self.timer = asyncio.create_task(self._watch_deadline())
-                await self._broadcast({"type": "start", "players": list(self.names.values()),
-                                       "seconds_left": self.time_limit})
+                start_msg = {"type": "start", "players": list(self.names.values()),
+                             "seconds_left": self.time_limit}
+                if self.feedback == "client":
+                    start_msg["secret"] = self.secret
+                await self._broadcast(start_msg)
 
             async for raw in ws:
                 try:
@@ -127,9 +137,11 @@ class RaceServer:
             await self._send(ws, {"type": "invalid", "word": word, "reason": str(e)})
         else:
             if result.legal:
-                await self._send(ws, {"type": "feedback", "guess": rules.normalize(word),
-                                      "pattern": result.pattern,
-                                      "guess_number": result.guess_number})
+                reply = {"type": "feedback", "guess": rules.normalize(word),
+                         "guess_number": result.guess_number}
+                if self.feedback == "server":
+                    reply["pattern"] = result.pattern
+                await self._send(ws, reply)
                 await self._broadcast({"type": "progress", "name": self.names[pid],
                                        "guesses": result.guess_number,
                                        "solved": result.solved}, skip=ws)
@@ -169,7 +181,8 @@ class RaceServer:
 
 async def _serve(args):
     server = RaceServer(rules.pick_secret(args.seed), args.players, args.hard,
-                        rule=args.rule, time_limit=args.time_limit)
+                        rule=args.rule, time_limit=args.time_limit,
+                        feedback=args.feedback)
     async with serve(server.handler, args.host, args.port):
         await server.done.wait()
         if server.timer is not None:
@@ -186,6 +199,7 @@ def main():
     p.add_argument("--rule", choices=["fewest_guesses", "first_to_solve"],
                    default="fewest_guesses")
     p.add_argument("--time-limit", type=float, default=300)
+    p.add_argument("--feedback", choices=["server", "client"], default="server")
     asyncio.run(_serve(p.parse_args()))
 
 
