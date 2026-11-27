@@ -14,10 +14,11 @@ from game.race import Race, RaceError
 
 class RaceServer:
     def __init__(self, secret: str, n_players: int, hard: bool = False,
-                 time_limit: float = 300, clock=time.monotonic):
+                 rule: str = "fewest_guesses", time_limit: float = 300, clock=time.monotonic):
         self.secret = secret
         self.n_players = n_players
         self.hard = hard
+        self.rule = rule
         self.time_limit = time_limit
         self.clock = clock
         self.done = asyncio.Event()
@@ -77,7 +78,7 @@ class RaceServer:
 
             if len(self.names) == self.n_players:
                 self.race = Race(self.secret, list(self.names), time_limit=self.time_limit,
-                                 hard=self.hard,
+                                 hard=self.hard, rule=self.rule,
                                  bots=self.bots)
                 self.start = self.clock()
                 self.timer = asyncio.create_task(self._watch_deadline())
@@ -168,7 +169,7 @@ class RaceServer:
 
 async def _serve(args):
     server = RaceServer(rules.pick_secret(args.seed), args.players, args.hard,
-                        args.time_limit)
+                        rule=args.rule, time_limit=args.time_limit)
     async with serve(server.handler, args.host, args.port):
         await server.done.wait()
         if server.timer is not None:
@@ -182,6 +183,8 @@ def main():
     p.add_argument("--players", type=int, default=2)
     p.add_argument("--seed", type=int, required=True)
     p.add_argument("--hard", action="store_true")
+    p.add_argument("--rule", choices=["fewest_guesses", "first_to_solve"],
+                   default="fewest_guesses")
     p.add_argument("--time-limit", type=float, default=300)
     asyncio.run(_serve(p.parse_args()))
 

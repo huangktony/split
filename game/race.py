@@ -40,7 +40,8 @@ class _Player:
 
 class Race:
     def __init__(self, secret: str, player_ids: list[str], time_limit: float = 300,
-                 hard: bool = False, bots: list[str] = ()):
+                 hard: bool = False, bots: list[str] = (),
+                 rule: str = "fewest_guesses"):
         if not player_ids:
             raise RaceError("need at least one player")
         if len(set(player_ids)) != len(player_ids):
@@ -49,7 +50,10 @@ class Race:
             raise RaceError("time limit must be positive")
         if not set(bots) <= set(player_ids):
             raise RaceError("unknown bot")
+        if rule not in ("fewest_guesses", "first_to_solve"):
+            raise RaceError("unknown rule")
         self._secret = secret
+        self._rule = rule
         self._deadline = time_limit
         self._hard = hard
         self._bots = set(bots)
@@ -103,13 +107,17 @@ class Race:
         player.finished = True
 
     def ranking(self) -> list[Standing]:
-        items = [(pid, p) for pid, p in self._players.items()]
+        items = list(self._players.items())
+        if self._rule == "first_to_solve":
+            key = lambda p: p.finish_time
+        else:
+            key = lambda p: len(p.history)
         solvers = sorted((i for i in items if i[1].solved),
-                         key=lambda i: len(i[1].history))  # stable: keeps join order
+                         key=lambda i: key(i[1]))  # stable: keeps join order
         out = []
         place = 0
         for n, (pid, p) in enumerate(solvers):
-            if n == 0 or len(p.history) != len(solvers[n - 1][1].history):
+            if n == 0 or key(p) != key(solvers[n - 1][1]):
                 place = n + 1  # competition ranking: 1, 1, 3
             out.append(Standing(pid, True, len(p.history), p.finish_time, place))
         unsolved_place = len(solvers) + 1
