@@ -77,6 +77,7 @@ class RaceServer:
 
             if len(self.names) == self.n_players:
                 self.race = Race(self.secret, list(self.names), time_limit=self.time_limit,
+                                 hard=self.hard,
                                  bots=self.bots)
                 self.start = self.clock()
                 self.timer = asyncio.create_task(self._watch_deadline())

@@ -40,7 +40,7 @@ class _Player:
 
 class Race:
     def __init__(self, secret: str, player_ids: list[str], time_limit: float = 300,
-                 bots: list[str] = ()):
+                 hard: bool = False, bots: list[str] = ()):
         if not player_ids:
             raise RaceError("need at least one player")
         if len(set(player_ids)) != len(player_ids):
@@ -51,6 +51,7 @@ class Race:
             raise RaceError("unknown bot")
         self._secret = secret
         self._deadline = time_limit
+        self._hard = hard
         self._bots = set(bots)
         self._players = {pid: _Player() for pid in player_ids}
 
@@ -74,7 +75,7 @@ class Race:
         if t > self._deadline:
             raise RaceError("race over")
         word = rules.normalize(word)
-        reason = rules.check_guess(word, player.history, hard=False)
+        reason = rules.check_guess(word, player.history, self._hard)
         if reason is not None:
             return GuessResult(False, None, len(player.history), False, False, reason)
         pattern = rules.feedback(word, self._secret)
